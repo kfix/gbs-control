@@ -20,13 +20,19 @@
 #include "framesync.h"
 #include "osd.h"
 
+#include ".ssid.h"
+
 #include "SSD1306Wire.h"
 #include "fonts.h"
 #include "images.h"
-SSD1306Wire display(0x3c,D2,D1); //inits I2C address & pins for OLED 
-const int pin_clk = 14; //D5 = GPIO14 (input of one direction for encoder)
-const int pin_data = 13; //D7 = GPIO13	(input of one direction for encoder)
-const int pin_switch = 0; //D3 = GPIO0 pulled HIGH, else boot fail (middle push button for encoder)
+SSD1306Wire display(0x3c,P10,P9); //inits I2C address & pins for OLED 
+const int pin_clk = P5; //D5 = GPIO14 (input of one direction for encoder)
+const int pin_data = P0; //D7 = GPIO13	(input of one direction for encoder)
+const int pin_switch = P6; //D3 = GPIO0 pulled HIGH, else boot fail (middle push button for encoder)
+// override platform defines for de-Particled DigiStump Oak -> https://github.com/esp8266/Arduino/blob/master/variants/oak/pins_arduino.h
+#define SDA 2U // P0
+#define SCL 4U // P5 -- default choice is bad because its also the flash-mode toggle when pulled down
+//#define LED_BUILTIN 5U // P1
 
 String oled_menu[4] = {"Resolutions","Presets","Misc.","Current Settings"};
 String oled_Resolutions[7] = {"1280x960","1280x1024","1280x720","1920x1080","480/576","Downscale","Pass-Through"};
@@ -107,15 +113,15 @@ static const char ap_info_string[] PROGMEM =
 static const char st_info_string[] PROGMEM =
 "(WiFi): Access 'http://gbscontrol:80' or 'http://gbscontrol.local' (or device IP) in your browser";
 #else
-const char* ap_ssid = "gbsslave";
+const char* ap_ssid = "gbscontrol";
 const char* ap_password = "qqqqqqqq";
-const char* device_hostname_full = "gbsslave.local";
-const char* device_hostname_partial = "gbsslave"; // for MDNS
+const char* device_hostname_full = "gbscontrol.local";
+const char* device_hostname_partial = "gbscontrol"; // for MDNS
 //
 static const char ap_info_string[] PROGMEM =
-"(WiFi): AP mode (SSID: gbsslave, pass 'qqqqqqqq'): Access 'gbsslave.local' in your browser";
+"(WiFi): AP mode (SSID: gbscontrol, pass 'qqqqqqqq'): Access 'gbscontrol.local' in your browser";
 static const char st_info_string[] PROGMEM =
-"(WiFi): Access 'http://gbsslave:80' or 'http://gbsslave.local' (or device IP) in your browser";
+"(WiFi): Access 'http://gbscontrol:80' or 'http://gbscontrol.local' (or device IP) in your browser";
 #endif
 
 AsyncWebServer server(80);
@@ -124,15 +130,19 @@ WebSocketsServer webSocket(81);
 //AsyncWebSocket webSocket("/ws");
 PersWiFiManager persWM(server, dnsServer);
 
-#define DEBUG_IN_PIN D6 // marked "D12/MISO/D6" (Wemos D1) or D6 (Lolin NodeMCU)
+#define DEBUG_IN_PIN P8 // marked "D12/MISO/D6" (Wemos D1) or D6 (Lolin NodeMCU)
 // SCL = D1 (Lolin), D15 (Wemos D1) // ESP8266 Arduino default map: SCL
 // SDA = D2 (Lolin), D14 (Wemos D1) // ESP8266 Arduino default map: SDA
+/*
 #define LEDON \
   pinMode(LED_BUILTIN, OUTPUT); \
   digitalWrite(LED_BUILTIN, LOW)
 #define LEDOFF \
   digitalWrite(LED_BUILTIN, HIGH); \
   pinMode(LED_BUILTIN, INPUT)
+*/
+#define LEDON ;
+#define LEDOFF ;
 
 // fast ESP8266 digitalRead (21 cycles vs 77), *should* work with all possible input pins
 // but only "D7" and "D6" have been tested so far
@@ -498,11 +508,6 @@ void externalClockGenDetectPresence() {
   }
 }
 
-static inline void writeOneByte(uint8_t slaveRegister, uint8_t value)
-{
-  writeBytes(slaveRegister, &value, 1);
-}
-
 static inline void writeBytes(uint8_t slaveRegister, uint8_t* values, uint8_t numValues)
 {
   if (slaveRegister == 0xF0 && numValues == 1) {
@@ -510,6 +515,11 @@ static inline void writeBytes(uint8_t slaveRegister, uint8_t* values, uint8_t nu
   }
   else
     GBS::write(lastSegment, slaveRegister, values, numValues);
+}
+
+static inline void writeOneByte(uint8_t slaveRegister, uint8_t value)
+{
+  writeBytes(slaveRegister, &value, 1);
 }
 
 void copyBank(uint8_t* bank, const uint8_t* programArray, uint16_t* index)
@@ -3263,7 +3273,7 @@ void doPostPresetLoadSteps() {
   if (rto->presetID == 0x06 || rto->presetID == 0x16) {
     isCustomPreset = 0; // override so it applies section 2 deinterlacer settings
   }
-
+  bool did_setup_downscaling = false;
   if (!isCustomPreset) {
     if (rto->videoStandardInput == 3 || rto->videoStandardInput == 4 || 
       rto->videoStandardInput == 8 || rto->videoStandardInput == 9) 
@@ -3378,6 +3388,7 @@ void doPostPresetLoadSteps() {
           GBS::IF_HB_SP::write(0x50);           // 1_12 deinterlace offset, green bar
           GBS::IF_HBIN_SP::write(0xD0);         // 1_26
         }
+        did_setup_downscaling = true;
       }
     }
     if (rto->videoStandardInput == 3 || rto->videoStandardInput == 4 || 
@@ -3423,6 +3434,7 @@ void doPostPresetLoadSteps() {
         GBS::MADPT_VSCALE_DEC_FACTOR::write(1); // 2_31 0..1
         GBS::MADPT_SEL_PHASE_INI::write(1);     // 2_31 2 enable
         GBS::MADPT_SEL_PHASE_INI::write(0);     // 2_31 2 disable
+        did_setup_downscaling = true;
       }
     }
     if (rto->videoStandardInput == 3 && rto->presetID != 0x06)
@@ -3549,6 +3561,9 @@ void doPostPresetLoadSteps() {
   }
 
   if (rto->presetID == 0x06 || rto->presetID == 0x16) {
+    if (!did_setup_downscaling) {
+      SerialM.println("downscaling not setup - input source is incompatible with it?");
+    }
     isCustomPreset = GBS::GBS_PRESET_CUSTOM::read(); // override back
   }
 
@@ -3958,6 +3973,7 @@ void doPostPresetLoadSteps() {
   else if (rto->videoStandardInput == 2)  SerialM.print(F("PAL 50Hz "));
   else if (rto->videoStandardInput == 3)  SerialM.print(F("EDTV 60Hz"));
   else if (rto->videoStandardInput == 4)  SerialM.print(F("EDTV 50Hz"));
+  // cannot downscale the following resolutions...
   else if (rto->videoStandardInput == 5)  SerialM.print(F("720p 60Hz HDTV "));
   else if (rto->videoStandardInput == 6)  SerialM.print(F("1080i 60Hz HDTV "));
   else if (rto->videoStandardInput == 7)  SerialM.print(F("1080p 60Hz HDTV "));
@@ -4101,6 +4117,7 @@ void applyPresets(uint8_t result) {
       writeProgramArrayNew(ntsc_1920x1080, false);
     }
     else if (uopt->presetPreference == 6) {
+        SerialM.println("switchin preset to downscaled 240p (ntsc)!");
       writeProgramArrayNew(ntsc_downscale, false);
     }
   }
@@ -4143,6 +4160,7 @@ void applyPresets(uint8_t result) {
     return;
   }
   else if (result == 15) {
+    // failed?
     SerialM.print(F("RGB/HV "));
     if (rto->syncTypeCsync) { SerialM.print(F("(CSync) ")); }
     //if (uopt->preferScalingRgbhv) {
@@ -5630,7 +5648,7 @@ void stopWire() {
 }
 
 void startWire() {
-  Wire.begin();
+  Wire.begin(pin_data, pin_clk);
   // The i2c wire library sets pullup resistors on by default. 
   // Disable these to detect/work with GBS onboard pullups
   pinMode(SCL, OUTPUT_OPEN_DRAIN);
@@ -6990,6 +7008,15 @@ void ICACHE_RAM_ATTR isrRotaryEncoder(){
 	}
 	lastInterruptTime = interruptTime;
 }
+void connectToWifi() {
+    // attempt wifi station mode connect
+    delay(30);
+    WiFi.mode(WIFI_STA);
+    WiFi.hostname(device_hostname_partial); // _full
+    SerialM.println("enabling STA WiFI");
+    //WiFi.begin(); // ESP8266 is supposed to "just work" and reconnect back to last used SSID with begin()...
+    WiFi.begin(MY_WIFI_SSID, MY_WIFI_PASS, 0, 0, true); // but maybe digistump garbage ROM is clearing that memory on reset??!
+}
 void setup() {
   display.init(); //inits OLED on I2C bus
   display.flipScreenVertically(); //orientation fix for OLED
@@ -7090,7 +7117,7 @@ void setup() {
   pinMode(LED_BUILTIN, OUTPUT);
   LEDON; // enable the LED, lets users know the board is starting up
 
-  //Serial.setDebugOutput(true); // if you want simple wifi debug info
+  Serial.setDebugOutput(true); // if you want simple wifi debug info
 
   // delay 1 of 2
   unsigned long initDelay = millis();
@@ -7189,6 +7216,8 @@ void setup() {
   startWire();
   GBS::STATUS_00::read(); GBS::STATUS_00::read(); GBS::STATUS_00::read();
 
+  connectToWifi();
+  
   // delay 2 of 2
   initDelay = millis();
   while (millis() - initDelay < 1000) {
@@ -7303,6 +7332,11 @@ void setup() {
   if (Serial.available()) {
     discardSerialRxData();
   }
+
+   // ESP.wdtDisable(); //still crashes after attempt to use STA WIFI, disabling WDT just doesn't allow rebooting on its own now.  	
+ESP.wdtEnable(1000);
+
+   // esp8266 ets Jan 8 2013,rst cause:2, boot mode:(3,0) // after STA attempt
 }
 
 #ifdef HAVE_BUTTONS
@@ -7402,6 +7436,7 @@ void updateWebSocketData() {
         break;
       }
 
+//https://github.com/ramapcsx2/gbs-control/issues/323
       toSend[2] = (char)uopt->presetSlot;
 
       // '@' = 0x40, used for "byte is present" detection; 0x80 not in ascii table
@@ -7878,8 +7913,10 @@ if(oled_encoder_pos != oled_lastCount){
       }
     break;
     case 'u':
-      ResetSDRAM();
-    break;
+      //SerialM.println("resetting GBS SDRAM");
+      //ResetSDRAM();
+      connectToWifi();
+      break;
     case 'f':
       SerialM.print(F("peaking "));
       if (uopt->wantPeaking == 0) {
@@ -8758,7 +8795,7 @@ void handleType2Command(char argument) {
     // reset to defaults button
     webSocket.close();
     loadDefaultUserOptions();
-    saveUserPrefs();
+    purgeUserPrefs();
     Serial.println(F("options set to defaults, restarting"));
     delay(60);
     ESP.reset(); // don't use restart(), messes up websocket reconnects
@@ -8859,10 +8896,10 @@ void handleType2Command(char argument) {
   break;
   case 'f':
   case 'g':
-  case 'h':
+  case 'h': // /uc?h - 480p
   case 'p':
   case 's':
-  case 'L':
+  case 'L': // /uc?L "downscale" - 15khz - 240p
   {
     // load preset via webui
     uint8_t videoMode = getVideoMode();
@@ -8875,7 +8912,7 @@ void handleType2Command(char argument) {
     if (argument == 'h') uopt->presetPreference = 1; // 720x480/768x576
     if (argument == 'p') uopt->presetPreference = 4; // 1280x1024
     if (argument == 's') uopt->presetPreference = 5; // 1920x1080
-    if (argument == 'L') uopt->presetPreference = 6; // downscale
+    if (argument == 'L') uopt->presetPreference = 6; // downscale (720x240p)
 
     rto->useHdmiSyncFix = 1;  // disables sync out when programming preset
     if (rto->videoStandardInput == 14) {
@@ -9078,7 +9115,9 @@ void handleType2Command(char argument) {
     WiFi.mode(WIFI_STA);
     WiFi.hostname(device_hostname_partial); // _full
     delay(30);
+    SerialM.println("resetting to enable STA WiFI - cfg via Web");
     ESP.reset();
+    // crashes after this
   break;
   case 'v':
   {
@@ -9277,7 +9316,7 @@ void startWebserver()
       WiFi.begin();
     }
 
-    typeTwoCommand = 'u'; // next loop, set wifi station mode and restart device
+    typeTwoCommand = 'u'; // next loop, set wifi station mode and connect
   });
 
   server.on("/bin/slots.bin", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -9813,6 +9852,15 @@ void saveUserPrefs() {
   
 
   f.close();
+}
+
+void purgeUserPrefs() {
+  Dir dir = SPIFFS.openDir("/");
+  while (dir.next()) {
+    SerialM.print("removing file: ");
+    SerialM.println(dir.fileName());
+    SPIFFS.remove(dir.fileName());
+  }
 }
 
 #endif
