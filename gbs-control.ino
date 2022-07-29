@@ -20,8 +20,6 @@
 #include "framesync.h"
 #include "osd.h"
 
-#include ".ssid.h"
-
 #include "SSD1306Wire.h"
 #include "fonts.h"
 #include "images.h"
@@ -7008,16 +7006,9 @@ void ICACHE_RAM_ATTR isrRotaryEncoder(){
 	}
 	lastInterruptTime = interruptTime;
 }
-void connectToWifi() {
-    // attempt wifi station mode connect
-    delay(30);
-    WiFi.mode(WIFI_STA);
-    WiFi.hostname(device_hostname_partial); // _full
-    SerialM.println("enabling STA WiFI");
-    //WiFi.begin(); // ESP8266 is supposed to "just work" and reconnect back to last used SSID with begin()...
-    WiFi.begin(MY_WIFI_SSID, MY_WIFI_PASS, 0, 0, true); // but maybe digistump garbage ROM is clearing that memory on reset??!
-}
+
 void setup() {
+  enableWiFiAtBootTime(); // https://github.com/esp8266/Arduino/pull/7902
   display.init(); //inits OLED on I2C bus
   display.flipScreenVertically(); //orientation fix for OLED
   
@@ -7215,8 +7206,6 @@ void setup() {
   // library may change i2c clock or pins, so restart
   startWire();
   GBS::STATUS_00::read(); GBS::STATUS_00::read(); GBS::STATUS_00::read();
-
-  connectToWifi();
   
   // delay 2 of 2
   initDelay = millis();
@@ -7913,9 +7902,8 @@ if(oled_encoder_pos != oled_lastCount){
       }
     break;
     case 'u':
-      //SerialM.println("resetting GBS SDRAM");
-      //ResetSDRAM();
-      connectToWifi();
+      SerialM.println("resetting GBS SDRAM");
+      ResetSDRAM();
       break;
     case 'f':
       SerialM.print(F("peaking "));
@@ -9305,6 +9293,7 @@ void startWebserver()
 
     if (request->arg("n").length()) { // n holds ssid
       if (request->arg("p").length()) { // p holds password
+        WiFi.persistent(true); // enable persistence of credentials
         // false = only save credentials, don't connect
         WiFi.begin(request->arg("n").c_str(), request->arg("p").c_str(), 0, 0, false);
       }
